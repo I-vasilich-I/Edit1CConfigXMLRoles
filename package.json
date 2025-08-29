@@ -1,0 +1,16 @@
+{
+  "name": "editxml",
+  "version": "1.0.0",
+  "description": "Parse xml, edit, write it back into xml",
+  "license": "ISC",
+  "author": "Oleg Vaskevich",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js --dirPath=d:\\ЦФ_ХМЛ\\",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "xml-js": "^1.6.11"
+  }
+}

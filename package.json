@@ -1,7 +1,7 @@
 {
   "name": "editxml",
   "version": "1.0.0",
-  "description": "Parse xml, edit, write it back into xml",
+  "description": "Обрабатка xml файлов ролей Конфигурации 1С, выгруженной в файлы, добавляя набор прав запрещающих интерактивное удаление(помеченных, предопределенных).",
   "license": "ISC",
   "author": "Oleg Vaskevich",
   "type": "module",

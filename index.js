@@ -1,9 +1,17 @@
 import { xml2js, js2xml } from 'xml-js';
-import { readFileSync, writeFileSync } from 'fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+// extracts param (the directory path) from command line e.g. "node index.js --dirPath=d:\\ЦФ_ХМЛ\\ 
+// извлекает параметр из выполняемой команды
+function getDirPath() {
+  const args = process.argv.slice(2);
 
+  return args[0]?.split('=')[1] || undefined;
+};
+
+// returns the set of document's props(rights) that should be turned off
+// возвращает набор прав которые нужно выключить для документов
 function getDocumentsSetOfProperties(){
   const setOfProperties = new Set;
   setOfProperties.add('InteractiveDelete');
@@ -12,6 +20,8 @@ function getDocumentsSetOfProperties(){
   return setOfProperties;
 }
 
+// returns the set of catalog's props(rights) that should be turned off
+// возвращает набор прав которые нужно выключить для справочников
 function getCatalogSetOfProperties(){
   const setOfProperties = new Set;
   setOfProperties.add('InteractiveDelete');
@@ -21,6 +31,7 @@ function getCatalogSetOfProperties(){
 
   return setOfProperties;
 }
+
 
 function isCatalog(properties, processedCatalogs) {
   return isTargetObject(properties, processedCatalogs, 'Catalog');
@@ -46,6 +57,10 @@ function isTargetObject(properties, processedObjects, objectName) {
       // 1. Document.Invoice.StandardAttribute.Description
       // 2. Document.Invoice
       // we want to add only 2 into processed objects, also only 2 qualifies as the target object 
+      // function should do only one thing, but I broke the rule here ;)
+      // 
+      // в обработанные объекты должны попадать именно объекты, а не подчененные реквизиты, 
+      // т.к. только у объектов есть права на интерактивное удаление
       if (arr.length === 2) {
         processedObjects.add(arr[1]);
         return true;
@@ -57,6 +72,8 @@ function isTargetObject(properties, processedObjects, objectName) {
  
 }
 
+// RightElement template
+// Шаблон елемента Право
 function newRightElement(rightName) {
   const rightElement = { 
     type: 'element', 
@@ -85,6 +102,8 @@ function newRightElement(rightName) {
   return rightElement;
 }
 
+// ObjectElement template
+// Шаблон елемента Объект
 function newObjectElement(rootObjectName, objectName, rightElements = []) {
   const objectElement = {
     type: 'element', 
@@ -103,9 +122,15 @@ function newObjectElement(rootObjectName, objectName, rightElements = []) {
     ]
   }
 
-
+  return objectElement;
 }
 
+// Go through all rights, if the right is in the set of properties of the target object, 
+// then change the value and add to proccessed props set.
+// In the end add rights from the set of properties, that ain't proccessed.
+// Проверяет права объекта, если право в наборе прав объекта к отключению - редактируем(отключаем)
+// и добавляем в набор обработанных прав
+// В конце добавляем права из набора, которых нет в обработанных правах.
 function editProperties(properties, setOfProperties) {
   const props = properties.filter(el => el.name === 'right' && el.hasOwnProperty('elements') && el.elements.length > 0); 
   
@@ -136,6 +161,17 @@ function editProperties(properties, setOfProperties) {
 
 }
 
+// During 1C Config export into xml-files, not all objects got exported 
+// Seams like it fallows that logic, might be wrong:
+// - roles with checked checkbox set rights for new objects, export only turned off rights
+// - roles with unchecked checkbox set rights for new objects, export only turned on rights
+// So after editing all role files, we had to add other objects with the set of properties.
+// При выгрузке конфигурации в файлы, выгружает не все объекты
+// Похоже логика такая, но это не точно:
+// - роли в которых по объекту стоит галочка устанавливать права для новых объектов, выгружает только не проставленные права
+// - роли в которых по объекту снята галочка устанавливать права для новых объектов, выгружает только проставленные права
+// т.е. по мимо редактирования существующих объектов с правами
+// необходимо еще дописывать необработанные объекты с добавлением прав из набора.
 function addUnprocessedObjects(objectElements, listOfObjects, processedObjects, setOfProperties, rootObjectName) {
   listOfObjects.forEach((objectName) => {
     if (!processedObjects.has(objectName)) {
@@ -171,13 +207,13 @@ async function processFile(filePath, documents, catalogs) {
 
     const object = RighstElements[i];
 
-    if (object.name !== 'object') {
+    if (object?.name !== 'object') {
       continue;
     }
 
-    const properties = object.elements;
+    const properties = object?.elements;
 
-    if (properties.length === 0) {
+    if (properties?.length === 0) {
       continue;
     }
 
@@ -195,43 +231,33 @@ async function processFile(filePath, documents, catalogs) {
     }
 
     editProperties(properties, setOfProperties);
-    
-    
+     
   }
 
-  const setForAttributesByDefault = RighstElements.find(el => el.name === 'setForAttributesByDefault');
-  
-  const isSetForAttributesByDefault = setForAttributesByDefault ? setForAttributesByDefault?.elements[0]?.text === 'true' : false;
-
-  if (isSetForAttributesByDefault) {
-    addUnprocessedObjects(RighstElements, documents, processedDocuments, documentsSetOfProperties, 'Document');
-    addUnprocessedObjects(RighstElements, catalogs, processedCatalogs, catalogsSetOfProperties, 'Catalog');
-  }
+  addUnprocessedObjects(RighstElements, documents, processedDocuments, documentsSetOfProperties, 'Document');
+  addUnprocessedObjects(RighstElements, catalogs, processedCatalogs, catalogsSetOfProperties, 'Catalog');
 
   const xmlres = js2xml(result, {compact: false, spaces: 2});
 
   await writeFile(filePath, xmlres);
 }
 
-function getDirPath() {
-  const args = process.argv.slice(2);
-
-  return args[0]?.split('=')[1] || undefined;
-};
-
-
+// Documents and Catalogs have each separate folder, with xml files per each object
+// File name - Object name
+// Документы и Справочники выгружаются каждый в свою папку, в которой лежат xml файлы каждого объекта
+// Имя файла - Имя объекта
 async function getListOfObjects(dirPath, folderName) {
 
-  const documentsDirPath = path.join(dirPath, `${folderName}\\`);
+  const objectsDirPath = path.join(dirPath, `${folderName}\\`);
 
   try {
-    const documentFiles = await readdir(documentsDirPath);
+    const objectFiles = await readdir(objectsDirPath);
 
-    const documents = documentFiles
-      .filter((docFile) => path.extname(docFile) === '.xml')
-      .map((docFile) => path.basename(docFile, '.xml'));
+    const objects = objectFiles
+      .filter((objFile) => path.extname(objFile) === '.xml')
+      .map((objFile) => path.basename(objFile, '.xml'));
 
-    return documents;
+    return objects;
     
   } catch (error) {
     console.error(err);
@@ -239,6 +265,7 @@ async function getListOfObjects(dirPath, folderName) {
 
   return [];    
 }
+
 
 async function getListOfRoleFiles(dirPath) {
   try {
@@ -253,6 +280,11 @@ async function getListOfRoleFiles(dirPath) {
 }
 
 async function processConfigFiles(dirPath) {
+  if (!dirPath) {
+    console.log('Dir path is undefined!');
+    return;
+  }
+
   try {
     const rolesDirPath = path.join(dirPath, 'Roles\\');
 
@@ -260,12 +292,16 @@ async function processConfigFiles(dirPath) {
     const catalogs = await getListOfObjects(dirPath, 'Catalogs'); 
     const rolefiles = await getListOfRoleFiles(rolesDirPath);
 
+    const promises = [];
+
     for (const file of rolefiles) {
       if (path.basename(file) === 'Rights.xml') {
         const filePath = path.join(rolesDirPath, path.dirname(file), path.basename(file));
-        await processFile(filePath, documents, catalogs); 
+        promises.push(processFile(filePath, documents, catalogs)); 
       }
     }
+
+    await Promise.all(promises);
   } catch (err) {
     console.error(err);
   } 
